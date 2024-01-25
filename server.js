@@ -1,9 +1,11 @@
-import express from "express";
-import cors from "cors";
-import axios from "axios";
-import jwt from "jsonwebtoken";
-import fs from "fs";
-import dotenv from "dotenv";
+const { Web3Auth } = require("@web3auth/node-sdk");
+const { EthereumPrivateKeyProvider } = require("@web3auth/ethereum-provider");
+const jwt = require("jsonwebtoken");
+const fs = require("fs");
+const express = require("express");
+const cors = require("cors");
+const axios = require("axios");
+const dotenv = require("dotenv");
 dotenv.config();
 
 const app = express();
@@ -15,6 +17,41 @@ const githubClientSecret = process.env.GITHUB_CLIENT_SECRET;
 const githubRedirectUri = process.env.GITHUB_REDIRECT_URI;
 
 app.use(cors());
+
+const privateKeyProvider = new EthereumPrivateKeyProvider({
+    config: {
+        chainConfig: {
+            chainId: "0xaa36a7",
+            rpcTarget: "https://rpc.ankr.com/eth_sepolia",
+            displayName: "Sepolia",
+            blockExplorer: "https://sepolia.etherscan.io/",
+            ticker: "ETH",
+            tickerName: "Ethereum",
+        },
+    },
+});
+const web3auth = new Web3Auth({
+    clientId: "BPi5PB_UiIZ-cPz1GtV5i1I2iOSOHuimiXBI0e-Oe_u6X3oVAbCiAZOTEBtTXw4tsluTITPqA8zMsfxIKMjiqNQ", // Get your Client ID from the Web3Auth Dashboard
+    web3AuthNetwork: "sapphire_mainnet",
+    usePnPKey: false, // Setting this to true returns the same key as PnP Web SDK, By default, this SDK returns CoreKitKey.
+});
+web3auth.init({ provider: privateKeyProvider });
+
+const getPrivateKey = async (idToken, verifierId) => {
+    const web3authNodeprovider = await web3auth.connect({
+        verifier: "w3a-github-oauth-demo",
+        verifierId,
+        idToken,
+    });
+    // The private key returned here is the CoreKitKey
+    const ethPrivateKey = await web3authNodeprovider.request({ method: "eth_private_key" });
+    const ethPublicAddress = await web3authNodeprovider.request({ method: "eth_accounts" });
+    const ethData = {
+        ethPrivateKey,
+        ethPublicAddress,
+    };
+    return ethData;
+}
 
 const exchangeCodeForAccessToken = async (code) => {
     try {
@@ -55,17 +92,16 @@ const generateJwtToken = (userData) => {
         github_id: userData.id,
         username: userData.login,
         avatar_url: userData.avatar_url,
-        sub: userData.id,
+        sub: userData.id.toString(),
         name: userData.name,
         email: userData.email || null,
         aud: "https://github.com/login/oauth/access_token",
         iss: "https://github.com",
         iat: Math.floor(Date.now() / 1000),
+        exp: Math.floor(Date.now() / 1000) + (60 * 60),
     };
 
-    const expiresIn = '1h';
-
-    return jwt.sign(payload, privateKey, { algorithm: "RS256", keyid: "33c21a45d72adfdc99a20", expiresIn });
+    return jwt.sign(payload, privateKey, { algorithm: "RS256", keyid: "33c21a45d72adfdc99a20" });
 };
 
 app.get("/github/login", (req, res) => {
@@ -81,7 +117,8 @@ app.get("/github/callback", async (req, res) => {
         const accessToken = await exchangeCodeForAccessToken(code);
         const userData = await fetchGitHubUserDetails(accessToken);
         const jwtToken = generateJwtToken(userData);
-        res.json({ token: jwtToken });
+        const ethData = await getPrivateKey(jwtToken, userData.id.toString());
+        res.json({ userData, jwtToken, ethData });
     } catch (error) {
         console.error(error);
         res.status(500).send("Error during GitHub authentication");
