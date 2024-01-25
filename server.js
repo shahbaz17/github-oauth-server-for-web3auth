@@ -55,6 +55,7 @@ const generateJwtToken = (userData) => {
         github_id: userData.id,
         username: userData.login,
         avatar_url: userData.avatar_url,
+        sub: userData.id,
         name: userData.name,
         email: userData.email || null,
         aud: "https://github.com/login/oauth/access_token",
